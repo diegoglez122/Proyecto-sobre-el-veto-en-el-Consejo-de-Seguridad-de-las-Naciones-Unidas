@@ -127,4 +127,4 @@ with tab4:
             st.error(f"No exactamente. Fue {real} con {int(dd.max())} vetos "
                      f"({apuesta} tuvo {int(dd[apuesta])}).")
 
-st.caption("⚠️ Cifras aproximadas, solo ilustrativas. Fuente real: Biblioteca Digital de la ONU / Security Council Report.")
+st.caption("📊 Fuente: Biblioteca Dag Hammarskjöld, ONU. Datos oficiales extraídos mediante web scraping. (Consultado en noviembre de 2026). Nota: la década de 2020 está en curso.")
