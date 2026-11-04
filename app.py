@@ -166,7 +166,27 @@ with tab1:
         st.dataframe(f.pivot_table(index="decada", columns="pais", values="vetos",
                                    aggfunc="sum", fill_value=0))
         st.download_button("Descargar CSV", f.to_csv(index=False), "vetos_filtrado.csv")
+        st.markdown("### 💡 Conclusiones")
+    if por_pais.empty or por_pais.sum() == 0:
+        st.info("Con los filtros actuales no hay vetos que analizar.")
+    else:
+        ordenado = por_pais.sort_values(ascending=False)
+        total = int(ordenado.sum())
+        lider, n_lider = ordenado.index[0], int(ordenado.iloc[0])
+        decada_pico = por_dec.idxmax()
+        vetos_pico = int(por_dec.max())
+        
+        # Caso especial si solo se selecciona un país
+        if len(ordenado) == 1:
+            texto = f"📌 Has seleccionado un solo país: <b>{lider}</b>, que suma <b>{n_lider}</b> vetos en el periodo filtrado. La década más activa para este país fue <b>{decada_pico}</b>, con <b>{vetos_pico}</b> vetos."
+        else:
+            texto = f"📌 En la selección actual, <b>{lider}</b> concentra el <b>{n_lider/total:.0%}</b> de los vetos ({n_lider} de {total}). La década más activa fue <b>{decada_pico}</b>, con <b>{vetos_pico}</b> vetos."
 
+        st.markdown(f"""
+<div class='insight'>
+{texto}
+</div>
+""", unsafe_allow_html=True)
 # ---------- Evolución ----------
 with tab2:
     st.subheader("La carrera de los vetos")
