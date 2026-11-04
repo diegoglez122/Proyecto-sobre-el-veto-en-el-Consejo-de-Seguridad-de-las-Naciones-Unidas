@@ -3,6 +3,7 @@ import time
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -59,6 +60,8 @@ anios = sorted(int(d[:4]) for d in df["decada"].unique())
 DECADAS = [f"{a}s" for a in range(anios[0], anios[-1] + 1, 10)]
 PAISES = [p for p in COLORES if p in set(df["pais"])]
 TOTAL = int(df["vetos"].sum())
+hay_det = det is not None and {"anio", "pais", "tema", "decada"} <= set(det.columns)
+primer = det.groupby("pais")["anio"].min().to_dict() if hay_det else {}
 
 
 def elegir(label, opciones, default, key, multi=False):
@@ -139,14 +142,25 @@ with tab1:
                        margin=dict(t=50, b=10, l=10, r=10))
     g1.plotly_chart(fig1, use_container_width=True, config=ESTATICO)
 
-    fig2 = px.bar(x=list(por_pais.values), y=list(por_pais.index), orientation="h",
-                  color=list(por_pais.index), color_discrete_map=COLORES, text=list(por_pais.values))
-    fig2.update_traces(textposition="outside", cliponaxis=False)
-    fig2.update_layout(title="Por país", height=360, showlegend=False, bargap=0.4,
-                       xaxis=dict(visible=False, range=[0, max(1, por_pais.max()) * 1.2]),
-                       yaxis=dict(autorange="reversed", title=None),
-                       margin=dict(t=50, b=10, l=10, r=10))
+    fig2 = px.pie(names=list(por_pais.index), values=list(por_pais.values), hole=0.5,
+                  color=list(por_pais.index), color_discrete_map=COLORES)
+    fig2.update_traces(textinfo="percent", sort=False)
+    fig2.update_layout(title="Reparto por país", height=360, margin=dict(t=50, b=10, l=10, r=10),
+                       legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center", title=None))
     g2.plotly_chart(fig2, use_container_width=True, config=ESTATICO)
+
+    if hay_det:
+        dt = det[det["pais"].isin(paises) & det["decada"].isin(dec_rango) & (det["tema"] != "Otros")]
+        tc = dt["tema"].value_counts()
+        if not tc.empty:
+            fig3 = px.bar(x=list(tc.values), y=list(tc.index), orientation="h", text=list(tc.values))
+            fig3.update_traces(marker_color="#4f8cff", textposition="outside", cliponaxis=False)
+            fig3.update_layout(title="Temas más vetados", height=90 + 50 * len(tc), bargap=0.4,
+                               xaxis=dict(visible=False, range=[0, tc.max() * 1.2]),
+                               yaxis=dict(autorange="reversed", title=None),
+                               margin=dict(t=50, b=10, l=10, r=10))
+            st.plotly_chart(fig3, use_container_width=True, config=ESTATICO)
+            st.caption("Puntos de agenda de la lista de la ONU agrupados por tema; no se muestran los temas variados («Otros»).")
 
     with st.expander("📋 Ver y descargar los datos"):
         st.dataframe(f.pivot_table(index="decada", columns="pais", values="vetos",
@@ -156,7 +170,7 @@ with tab1:
 # ---------- Evolución ----------
 with tab2:
     st.subheader("La carrera de los vetos")
-    st.caption("Pulsa ▶ y mira cómo se van acumulando los vetos de cada país, década a década.")
+    st.caption("Pulsa ▶ y mira cómo se acumulan los vetos de cada país, año tras año.")
     acum = (f.pivot_table(index="decada", columns="pais", values="vetos", aggfunc="sum")
               .reindex(index=dec_rango, columns=paises).fillna(0).cumsum())
     tope = max(1, acum.values.max())
@@ -173,18 +187,46 @@ with tab2:
         return fig
 
     c1, c2 = st.columns([1, 3])
-    play = c1.button("▶ Reproducir", type="primary", use_container_width=True)
+    play = c1.button("▶ Reproducir", type="primary", use_container_width=True) if hay_det else False
     if len(dec_rango) > 1:
         dec_sel = c2.select_slider("…o elige una década", dec_rango, value=dec_rango[-1])
     else:
         dec_sel = dec_rango[0]
-    hueco = st.empty()
+
     if play:
-        for d in dec_rango:
-            hueco.plotly_chart(carrera(d), use_container_width=True, config=ESTATICO, key=f"race_{d}")
-            time.sleep(0.9)
+        y0 = int(dec_rango[0][:4])
+        y1 = min(int(dec_rango[-1][:4]) + 9, int(det["anio"].max()))
+        years = list(range(y0, y1 + 1))
+        serie = (det[det["pais"].isin(paises)].groupby(["anio", "pais"]).size()
+                 .unstack(fill_value=0).reindex(index=years, columns=paises, fill_value=0).cumsum())
+        orden = list(serie.iloc[-1].sort_values(ascending=False).index)
+        tope_a = max(1, int(serie.values.max()))
+
+        def barra(a):
+            fila = serie.loc[a, orden]
+            return go.Bar(x=[int(v) for v in fila.values], y=orden, orientation="h",
+                          marker_color=[COLORES[p] for p in orden],
+                          text=[int(v) for v in fila.values], textposition="outside", cliponaxis=False)
+
+        paso = dict(mode="immediate", frame=dict(duration=0, redraw=False), transition=dict(duration=0))
+        fig = go.Figure(data=[barra(years[0])],
+                        frames=[go.Frame(data=[barra(a)], name=str(a)) for a in years])
+        fig.update_layout(
+            template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            title="Vetos acumulados", height=420, showlegend=False, bargap=0.55,
+            xaxis=dict(visible=False, range=[0, tope_a * 1.15]),
+            yaxis=dict(autorange="reversed"), margin=dict(t=50, b=10, l=10, r=10),
+            sliders=[dict(active=0, pad=dict(t=20), font=dict(color="rgba(0,0,0,0)"),
+                          currentvalue=dict(prefix="Año: ", font=dict(size=18, color="#f1f3f6")),
+                          steps=[dict(method="animate", label=str(a), args=[[str(a)], paso]) for a in years])])
+        html = fig.to_html(
+            include_plotlyjs="cdn", config={"displayModeBar": False}, auto_play=True,
+            animation_opts={"frame": {"duration": 110, "redraw": False},
+                            "transition": {"duration": 110, "easing": "linear"},
+                            "fromcurrent": True, "mode": "immediate"})
+        components.html(html + f"<!-- {time.time()} -->", height=460)
     else:
-        hueco.plotly_chart(carrera(dec_sel), use_container_width=True, config=ESTATICO, key="race_sel")
+        st.plotly_chart(carrera(dec_sel), use_container_width=True, config=ESTATICO, key="race_sel")
 
 # ---------- Compara ----------
 with tab3:
@@ -205,6 +247,9 @@ with tab3:
         m1, m2 = st.columns(2)
         m1.metric(p1, f"{t1} vetos", f"{t1 - t2:+d} frente a {p2}", delta_color="off")
         m2.metric(p2, f"{t2} vetos", f"{t2 - t1:+d} frente a {p1}", delta_color="off")
+        if hay_det:
+            m1.caption(f"Primer veto: {primer.get(p1, '—')}")
+            m2.caption(f"Primer veto: {primer.get(p2, '—')}")
 
 # ---------- Desafío ----------
 with tab4:
@@ -219,26 +264,34 @@ with tab4:
 
     preg = [
         (f"¿Qué país usó más vetos en los {dq}?", PAISES, en_dq.idxmax(),
-         f"Fue {en_dq.idxmax()}, con {int(en_dq.max())} vetos."),
+         f"Fue {en_dq.idxmax()}, con {int(en_dq.max())} vetos.",
+         "Pista: pestaña Resumen, deja todos los países y mueve el selector de años."),
         ("¿Qué década registró más vetos en total?", DECADAS, tot_dec.idxmax(),
-         f"Los {tot_dec.idxmax()}, con {int(tot_dec.max())} vetos."),
+         f"Los {tot_dec.idxmax()}, con {int(tot_dec.max())} vetos.",
+         "Pista: pestaña Resumen, con todo activado, mira las barras por década."),
         (f"¿Cuántos vetos ha usado {us} en total?",
          sorted({n_us, round(n_us * 0.5), round(n_us * 1.5), round(n_us * 2)}), n_us,
-         f"{us} suma {n_us} vetos."),
+         f"{us} suma {n_us} vetos.",
+         f"Pista: pestaña Compara, elige {us} y mira su total."),
     ]
-    if det is not None and {"anio", "pais", "tema"} <= set(det.columns):
-        primer = int(det[det.pais == us]["anio"].min())
+    if hay_det and us in primer:
         preg.append((f"¿En qué año usó {us} su primer veto?",
-                     sorted({1946, 1956, primer, 1990}), primer,
-                     f"En {primer}: fue miembro fundador de la ONU, pero tardó décadas en vetar."))
+                     sorted({1946, 1956, int(primer[us]), 1990}), int(primer[us]),
+                     f"En {int(primer[us])}: fue miembro fundador de la ONU, pero tardó décadas en vetar.",
+                     f"Pista: pestaña Compara, debajo del total aparece «Primer veto»."))
+    if hay_det:
         temas = det[det.tema != "Otros"]["tema"].value_counts()
         if not temas.empty:
-            preg.append(("¿Sobre qué tema se concentran más vetos?", list(temas.index), temas.index[0],
-                         f"{temas.index[0]}, con {int(temas.iloc[0])} vetos."))
+            preg.append(("¿Sobre qué tema se concentran más vetos en toda la historia?", list(temas.index),
+                         temas.index[0], f"{temas.index[0]}, con {int(temas.iloc[0])} vetos.",
+                         "Pista: pestaña Resumen, con todo activado, mira «Temas más vetados»."))
 
     with st.form("trivia"):
-        resp = [st.radio(f"{i + 1}. {q}", op, index=None, horizontal=True, key=f"q{i}")
-                for i, (q, op, ok, ex) in enumerate(preg)]
+        resp = []
+        for i, (q, op, ok, ex, pista) in enumerate(preg):
+            st.markdown(f"**{i + 1}. {q}**")
+            st.caption(f"🔎 {pista}")
+            resp.append(st.radio(q, op, index=None, horizontal=True, key=f"q{i}", label_visibility="collapsed"))
         enviado = st.form_submit_button("Comprobar respuestas", type="primary")
 
     if enviado:
